@@ -1,0 +1,5 @@
+# Rolf Resler and similar FTDI iBus adapters.
+# A later CarPlay dongle on another USB port does not match these ids.
+# If a second FTDI serial device is also plugged in, add ATTRS{serial}=="...".
+ACTION=="add", SUBSYSTEM=="tty", ATTRS{idVendor}=="0403", ATTRS{idProduct}=="6001", SYMLINK+="ibus0", GROUP="dialout", MODE="0660"
+ACTION=="add", SUBSYSTEM=="tty", ATTRS{idVendor}=="0403", ATTRS{idProduct}=="6015", SYMLINK+="ibus0", GROUP="dialout", MODE="0660"

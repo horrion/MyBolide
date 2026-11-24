@@ -1,0 +1,264 @@
+openapi: 3.0.3
+info:
+  title: MyBolide iBus sync
+  version: "1"
+  description: |
+    Local pull-and-ack API for a later iPhone app. The Pi keeps every iBus
+    frame until the phone acknowledges it. Discover the host with mDNS
+    service type `_mybolide._tcp`. Send `Authorization: Bearer <token>`.
+    Timestamps are milliseconds and are safe JSON integers. `mono_ms` is
+    monotonic for the Raspberry Pi boot. `wall_ms` is Unix time and is only
+    meaningful when `clock_trusted` is true.
+
+    A Bluetooth LE advertisement can wake the phone app after the owner has
+    opened it once and allowed Bluetooth and Local Network. The advertisement
+    is a doorbell: it carries service UUID `8f3c2a10-6b1e-4d55-9c0a-1e7b54a9d2f0`
+    and no bearer token. One readable characteristic,
+    `8f3c2a11-6b1e-4d55-9c0a-1e7b54a9d2f0`, returns JSON `{"pending": true, "port": 8741}`.
+    `pending` is true when any frame or signal row is still unacknowledged.
+    `port` is this HTTP API. The phone pulls and acknowledges over HTTP.
+    iOS relaunches the app only when it still has a Core Bluetooth
+    state-restoration scan, Bluetooth is on, and Background App Refresh is
+    on. Swiping the app away, or turning those off, stops the relaunch.
+    Low Power Mode makes the wake less reliable. If the HTTP port is
+    unreachable, the cache stays on the Pi.
+servers:
+  - url: http://{host}:8741
+    variables:
+      host:
+        default: 127.0.0.1
+paths:
+  /health:
+    get:
+      summary: Liveness check. No token required.
+      security: []
+      responses:
+        "200":
+          description: The process is up.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status:
+                    type: string
+                    enum: [ok]
+  /v1/sync/signals:
+    get:
+      summary: Decoded graph series newer than `after`.
+      security:
+        - bearer: []
+      parameters:
+        - $ref: "#/components/parameters/after"
+        - $ref: "#/components/parameters/limit"
+      responses:
+        "200":
+          description: |
+            A page of signals. If `oldest_id` is greater than `after + 1`,
+            the Pi dropped rows to stay under its disk cap.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [signals, next_after, oldest_id]
+                properties:
+                  signals:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Signal"
+                  next_after:
+                    type: integer
+                  oldest_id:
+                    type: integer
+                    nullable: true
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /v1/sync/frames:
+    get:
+      summary: Raw iBus frames newer than `after`.
+      security:
+        - bearer: []
+      parameters:
+        - $ref: "#/components/parameters/after"
+        - $ref: "#/components/parameters/limit"
+      responses:
+        "200":
+          description: A page of raw frames.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [frames, next_after, oldest_id]
+                properties:
+                  frames:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Frame"
+                  next_after:
+                    type: integer
+                  oldest_id:
+                    type: integer
+                    nullable: true
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /v1/sync/ack:
+    post:
+      summary: Delete cached rows at or below the given ids. Safe to retry.
+      security:
+        - bearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [signals_through, frames_through]
+              properties:
+                signals_through:
+                  type: integer
+                  minimum: 0
+                frames_through:
+                  type: integer
+                  minimum: 0
+      responses:
+        "200":
+          description: How many rows this call deleted.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [deleted_signals, deleted_frames]
+                properties:
+                  deleted_signals:
+                    type: integer
+                  deleted_frames:
+                    type: integer
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+components:
+  securitySchemes:
+    bearer:
+      type: http
+      scheme: bearer
+  parameters:
+    after:
+      name: after
+      in: query
+      schema:
+        type: integer
+        minimum: 0
+        default: 0
+    limit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 5000
+        default: 1000
+  responses:
+    BadRequest:
+      description: The query or body was rejected.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Unauthorized:
+      description: The bearer token is missing or wrong.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+    Signal:
+      type: object
+      required: [id, frame_id, boot_id, mono_ms, wall_ms, clock_trusted, name, value]
+      properties:
+        id:
+          type: integer
+        frame_id:
+          type: integer
+        boot_id:
+          type: string
+        mono_ms:
+          type: integer
+          description: Milliseconds on the Pi monotonic clock.
+        wall_ms:
+          type: integer
+          description: Unix epoch milliseconds.
+        clock_trusted:
+          type: boolean
+        name:
+          type: string
+          description: |
+            `speed_kmh` (byte times 2; raw 0xFF is omitted), `rpm` (byte times 100),
+            `ambient_c`, `coolant_c`, `odometer_km`, `ignition`
+            (0 off, 1 accessory, 2 run, 3 start), or `fuel_l`
+            (litres; cluster byte 0 is empty and 255 is a full `tank_litres`).
+          enum: [speed_kmh, rpm, ambient_c, coolant_c, odometer_km, ignition, fuel_l]
+        value:
+          type: number
+    Frame:
+      type: object
+      required: [id, boot_id, mono_ms, wall_ms, clock_trusted, src, dst, raw_hex]
+      properties:
+        id:
+          type: integer
+        boot_id:
+          type: string
+        mono_ms:
+          type: integer
+        wall_ms:
+          type: integer
+        clock_trusted:
+          type: boolean
+        src:
+          type: integer
+        dst:
+          type: integer
+        cmd:
+          type: integer
+          nullable: true
+        raw_hex:
+          type: string
+          description: Full frame, including the XOR checksum, lowercase hex.
+x-bluetooth:
+  role: doorbell
+  serviceUuid: "8f3c2a10-6b1e-4d55-9c0a-1e7b54a9d2f0"
+  characteristicUuid: "8f3c2a11-6b1e-4d55-9c0a-1e7b54a9d2f0"
+  characteristic:
+    description: |
+      A read returns this JSON object and nothing else. The bearer token is
+      absent. Bulk transfer stays on the HTTP API above.
+    schema:
+      type: object
+      additionalProperties: false
+      required: [pending, port]
+      properties:
+        pending:
+          type: boolean
+          description: True when any frame or signal row is still unacknowledged.
+        port:
+          type: integer
+          minimum: 1
+          maximum: 65535
+          description: HTTP port of this API.
+  ios:
+    - The owner opens the app once, so it can store the bearer token and obtain Bluetooth and Local Network permission.
+    - A Core Bluetooth state-restoration scan for the service UUID can relaunch the app later, while Bluetooth and Background App Refresh stay on and the app has not been swiped away.
+    - Low Power Mode makes that wake less reliable.
+    - On wake, if pending is true and the HTTP port is reachable, pull and acknowledge with a background URLSession. If the port is unreachable, leave the cache on the Pi.
+    - Send the log over HTTP. The Bluetooth packet only identifies the service.

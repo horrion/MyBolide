@@ -1,0 +1,32 @@
+[Unit]
+Description=MyBolide BMW iBus logger
+After=network-online.target bluetooth.target dev-ibus0.device
+Wants=network-online.target bluetooth.target dev-ibus0.device
+
+[Service]
+Type=simple
+User=mybolide
+Group=mybolide
+SupplementaryGroups=dialout bluetooth
+WorkingDirectory=/var/lib/mybolide
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/opt/mybolide/venv/bin/python -m mybolide --config /etc/mybolide/config.toml
+Restart=always
+RestartSec=2
+Nice=10
+CPUWeight=20
+IOSchedulingClass=idle
+IOSchedulingPriority=7
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/mybolide
+StateDirectory=mybolide
+UMask=0077
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

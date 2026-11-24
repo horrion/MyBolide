@@ -1,0 +1,28 @@
+# Copy to /etc/mybolide/config.toml. deploy/install.sh does this and
+# replaces the placeholder token. The service refuses to start while the
+# token is still "change-me".
+
+device = "/dev/ibus0"
+baud = 9600
+# "even" is 8E1, which matches the iBus wire. If a USB adapter already
+# strips parity and presents 8N1, set this to "none".
+parity = "even"
+rtscts = false
+# Silence on the USB serial port that closes a frame. 50ms sits above the
+# usual 16ms FTDI latency timer.
+gap_ms = 50
+bind = "0.0.0.0:8741"
+token = "change-me"
+db_path = "/var/lib/mybolide/bus.sqlite"
+# Leave this unset and the cache cap follows the SD card, keeping a quarter
+# of it (at least 2 GiB on an 8 GiB or larger card) for the OS, CarPlay, and
+# other software. Uncomment to set the cap yourself, in megabytes.
+# max_db_mb = 2048
+# Full-tank capacity used to turn the cluster's 0-255 fuel reading into litres.
+# An E46 is usually 63. An E39 is usually 70.
+tank_litres = 63
+batch_ms = 1000
+mdns = true
+# Wake-up beacon for a later iPhone app. The log still transfers over HTTP.
+# Set this to false if a CarPlay stack needs the built-in controller to itself.
+ble = true
