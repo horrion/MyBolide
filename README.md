@@ -71,10 +71,10 @@ curl -s -H "Authorization: Bearer TOKEN" \
 The Pi advertises Bluetooth LE service `8f3c2a10-6b1e-4d55-9c0a-1e7b54a9d2f0`. iOS background scanning matches that UUID. A readable characteristic, `8f3c2a11-6b1e-4d55-9c0a-1e7b54a9d2f0`, returns a short JSON object:
 
 ```json
-{"pending": true, "port": 8741}
+{"id": "345cec5a811e2694", "pending": true, "port": 8741}
 ```
 
-`port` is the HTTP API. `pending` is true while any frame or signal row is still unacknowledged, so a woken app can leave an empty cache alone. The bearer token stays in the config file and in the phone. The advertisement and the characteristic omit it.
+`port` is the HTTP API. `pending` is true while any frame or signal row is still unacknowledged, so a woken app can leave an empty cache alone. `id` is the first 16 hex characters of the SHA-256 of the bearer token. The phone matches that to a car. The token itself stays in the config file and in the phone. The advertisement does not carry it.
 
 The first launch has to be opened by the owner. That is when the app stores the token and iOS shows the Bluetooth and Local Network prompts. After that, a Core Bluetooth state-restoration scan can relaunch the app when the phone hears the service. The relaunch happens only while Bluetooth and Background App Refresh stay on, and only if the owner has not swiped the app away. Low Power Mode makes the wake less reliable.
 

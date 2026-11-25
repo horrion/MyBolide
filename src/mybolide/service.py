@@ -61,9 +61,13 @@ def main(argv: list[str] | None = None) -> int:
     beacon = None
     if config.ble:
         try:
-            from mybolide.ble import PresenceAdvertiser, unacked
+            from mybolide.ble import PresenceAdvertiser, logger_public_id, unacked
 
-            beacon = PresenceAdvertiser(config.bind_port, lambda: unacked(store))
+            beacon = PresenceAdvertiser(
+                config.bind_port,
+                lambda: unacked(store),
+                logger_id=logger_public_id(config.token),
+            )
             beacon.start()
         except Exception:
             log.exception(

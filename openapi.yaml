@@ -242,12 +242,18 @@ x-bluetooth:
   characteristic:
     description: |
       A read returns this JSON object and nothing else. The bearer token is
-      absent. Bulk transfer stays on the HTTP API above.
+      absent. `id` is the first 16 hex characters of the SHA-256 of that
+      token, so a phone can tell one car's Pi from another. It is not a
+      credential. Bulk transfer stays on the HTTP API above.
     schema:
       type: object
       additionalProperties: false
       required: [pending, port]
       properties:
+        id:
+          type: string
+          pattern: "^[0-9a-f]{16}$"
+          description: Public id of this Pi. Absent on loggers that predate it.
         pending:
           type: boolean
           description: True when any frame or signal row is still unacknowledged.

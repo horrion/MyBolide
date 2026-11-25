@@ -14,6 +14,7 @@ from mybolide.ble import (
     characteristic_bytes,
     characteristic_value,
     choose_adapter,
+    logger_public_id,
     presence_payload,
     unacked,
 )
@@ -33,6 +34,18 @@ def test_payload_is_the_port_and_the_pending_flag():
     assert body == {"pending": True, "port": 8741}
     assert set(body) == {"pending", "port"}
     assert b"token" not in presence_payload(8741, False)
+
+
+def test_public_id_identifies_the_logger_without_revealing_the_token():
+    assert logger_public_id("token-car-a") == "345cec5a811e2694"
+    assert logger_public_id("  token-car-a  ") == "345cec5a811e2694"
+    body = json.loads(presence_payload(8741, True, "345cec5a811e2694"))
+    assert body["id"] == "345cec5a811e2694"
+    encoded = presence_payload(8741, False, logger_public_id("secret-token"))
+    assert b"secret-token" not in encoded
+    assert b"token" not in encoded
+    with pytest.raises(ValueError):
+        presence_payload(8741, True, "not-a-logger-id")
 
 
 def test_payload_rejects_a_port_or_a_flag_the_phone_cannot_read():

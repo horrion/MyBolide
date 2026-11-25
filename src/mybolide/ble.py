@@ -4,13 +4,19 @@ iOS can relaunch an app that already has permission when it hears this
 service UUID. The advertisement only names the service. The log itself is
 still pulled over the HTTP API. The bearer token is not in the
 advertisement or the characteristic.
+
+The characteristic adds a public id, the first 16 hex characters of the
+SHA-256 of the token. The phone uses it to tell one car's Pi from another.
+It does not authenticate anything.
 """
 
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
+import re
 import threading
 from collections.abc import Callable, Mapping
 from typing import Any
@@ -35,19 +41,30 @@ _BLUEZ = "org.bluez"
 _ADVERTISING = "org.bluez.LEAdvertisingManager1"
 
 
-def presence_payload(port: int, pending: bool) -> bytes:
-    """JSON the phone reads: the HTTP port, and whether any row is unacked."""
+def logger_public_id(token: str) -> str:
+    """Public id for one Pi. Not the bearer token, and not useful as one."""
+    if not isinstance(token, str):
+        raise ValueError("token must be text")
+    stripped = token.strip()
+    if not stripped:
+        raise ValueError("token is empty")
+    return hashlib.sha256(stripped.encode("utf-8")).hexdigest()[:16]
+
+
+def presence_payload(port: int, pending: bool, logger_id: str = "") -> bytes:
+    """JSON the phone reads: the HTTP port, whether any row is unacked, and the public id."""
     if isinstance(port, bool) or not isinstance(port, int):
         raise ValueError("port must be an integer")
     if port < 1 or port > 65535:
         raise ValueError("port is out of range")
     if not isinstance(pending, bool):
         raise ValueError("pending must be true or false")
-    return json.dumps(
-        {"pending": pending, "port": port},
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode("ascii")
+    body: dict[str, Any] = {"pending": pending, "port": port}
+    if logger_id:
+        if not isinstance(logger_id, str) or re.fullmatch(r"[0-9a-f]{16}", logger_id) is None:
+            raise ValueError("logger id must be 16 hex characters")
+        body["id"] = logger_id
+    return json.dumps(body, separators=(",", ":"), sort_keys=True).encode("ascii")
 
 
 def unacked(store: Any) -> bool:
@@ -56,7 +73,11 @@ def unacked(store: Any) -> bool:
     return frames > 0 or signals > 0
 
 
-def characteristic_value(port: int, pending_fn: Callable[[], bool]) -> bytes:
+def characteristic_value(
+    port: int,
+    pending_fn: Callable[[], bool],
+    logger_id: str = "",
+) -> bytes:
     """Read the live pending flag. A store error reports pending, so the phone still tries HTTP."""
     try:
         pending = pending_fn()
@@ -66,16 +87,17 @@ def characteristic_value(port: int, pending_fn: Callable[[], bool]) -> bytes:
     if not isinstance(pending, bool):
         log.error("Bluetooth pending flag was not a boolean")
         pending = True
-    return presence_payload(port, pending)
+    return presence_payload(port, pending, logger_id)
 
 
 def characteristic_bytes(
     port: int,
     pending_fn: Callable[[], bool],
     options: Mapping[str, Any] | None,
+    logger_id: str = "",
 ) -> list[int]:
     """GATT ReadValue body, honoring an ATT offset when BlueZ passes one."""
-    payload = characteristic_value(port, pending_fn)
+    payload = characteristic_value(port, pending_fn, logger_id)
     offset = _value_offset(options)
     return list(payload[offset:])
 
@@ -116,13 +138,17 @@ class PresenceAdvertiser:
         port: int,
         pending: Callable[[], bool],
         *,
+        logger_id: str = "",
         advertise: Callable[[int, Callable[[], bool], threading.Event], None]
         | None = None,
         retry_s: float = 5.0,
     ) -> None:
         self._port = port
         self._pending = pending
-        self._advertise = advertise or serve_bluez
+        self._logger_id = logger_id
+        self._advertise = advertise or (
+            lambda port, pending, stop: serve_bluez(port, pending, stop, logger_id)
+        )
         self._retry_s = retry_s
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -231,10 +257,11 @@ class GattService(ServiceInterface):
 
 
 class GattCharacteristic(ServiceInterface):
-    def __init__(self, port: int, pending: Callable[[], bool]) -> None:
+    def __init__(self, port: int, pending: Callable[[], bool], logger_id: str = "") -> None:
         super().__init__("org.bluez.GattCharacteristic1")
         self._port = port
         self._pending = pending
+        self._logger_id = logger_id
 
     @dbus_property(access=PropertyAccess.READ)
     def UUID(self) -> "s":
@@ -250,22 +277,24 @@ class GattCharacteristic(ServiceInterface):
 
     @method()
     def ReadValue(self, options: "a{sv}") -> "ay":
-        return characteristic_bytes(self._port, self._pending, options)
+        return characteristic_bytes(self._port, self._pending, options, self._logger_id)
 
 
 def serve_bluez(
     port: int,
     pending: Callable[[], bool],
     stop: threading.Event,
+    logger_id: str = "",
 ) -> None:
     """Register the advertisement with BlueZ. Raises when the stack is absent."""
-    asyncio.run(_serve(port, pending, stop))
+    asyncio.run(_serve(port, pending, stop, logger_id))
 
 
 async def _serve(
     port: int,
     pending: Callable[[], bool],
     stop: threading.Event,
+    logger_id: str = "",
 ) -> None:
     from dbus_next import BusType
     from dbus_next.aio import MessageBus
@@ -279,7 +308,7 @@ async def _serve(
         bus.export(ADV_PATH, advertisement)
         bus.export(APP_PATH, Application())
         bus.export(SERVICE_PATH, GattService())
-        bus.export(CHAR_PATH, GattCharacteristic(port, pending))
+        bus.export(CHAR_PATH, GattCharacteristic(port, pending, logger_id))
         intro = await bus.introspect(_BLUEZ, adapter_path)
         proxy = bus.get_proxy_object(_BLUEZ, adapter_path, intro)
         ad_manager = proxy.get_interface(_ADVERTISING)
